@@ -32,6 +32,7 @@
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;
     size_t buffer_size, count, stride;
+    constexpr size_t HUGEPAGE_SIZE = 2 * 1024 * 1024; // 2MB
 
     initiator_device = xferBenchConfig::num_initiator_dev;
     target_device = xferBenchConfig::num_target_dev;
@@ -62,6 +63,12 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
         }
     }
     stride = buffer_size / count;
+
+    // For hugepages: ensure stride is a multiple of 2MB so addresses stay 2MB-aligned
+    // This ensures dev_offset = (i * stride) % iov.len is always a multiple of 2MB
+    if (xferBenchConfig::use_hugepages) {
+        stride = ((stride + HUGEPAGE_SIZE - 1) / HUGEPAGE_SIZE) * HUGEPAGE_SIZE;
+    }
 
     return std::make_pair(count, stride);
 }
@@ -108,11 +115,9 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        auto local_trans_lists = createTransferDescLists(worker,
-                                                         iov_lists,
-                                                         block_size,
-                                                         batch_size,
-                                                         num_threads);
+        size_t effective_batch = batch_size * std::max(1, xferBenchConfig::batch_queue_depth);
+        auto local_trans_lists =
+            createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 
         if (worker.isTarget()) {
             if (xferBenchConfig::isStorageBackend()) {
