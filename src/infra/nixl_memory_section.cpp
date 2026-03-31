@@ -148,7 +148,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     std::vector<nixlSectionDesc> local_batch;
     std::vector<nixlSectionDesc> self_batch;
     local_batch.reserve(mem_elms.descCount());
-    self_batch.reserve(mem_elms.descCount());
+    if (backend->supportsLocal()) self_batch.reserve(mem_elms.descCount());
 
     for (const auto &mem : mem_elms) {
         // TODO: For now trusting the user, but there can be a more checks mode
@@ -191,7 +191,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
 
     if (ret == NIXL_SUCCESS) {
         target.addDescs(std::move(local_batch));
-        remote_self.addDescs(std::move(self_batch));
+        if (backend->supportsLocal()) remote_self.addDescs(std::move(self_batch));
     } else {
         for (size_t j = 0; j < local_batch.size(); ++j) {
             if (backend->supportsLocal()) {
@@ -201,6 +201,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
             backend->deregisterMem(local_batch[j].metadataP);
         }
     }
+
     return ret;
 }
 
@@ -430,6 +431,37 @@ nixlRemoteSection::loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
     target.addDescs(std::move(mem_elms));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlRemoteSection::remLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine *backend) {
+    if (!backend) return NIXL_ERR_INVALID_PARAM;
+
+    nixl_mem_t nixl_mem = mem_elms.getType();
+    section_key_t sec_key = std::make_pair(nixl_mem, backend);
+    auto it = sectionMap.find(sec_key);
+    if (it == sectionMap.end()) return NIXL_ERR_NOT_FOUND;
+    nixlSecDescList &target = it->second;
+
+    std::vector<size_t> indices;
+    indices.reserve(mem_elms.descCount());
+    for (auto &elm : mem_elms) {
+        int index = target.getIndex(elm);
+        if (index < 0) return NIXL_ERR_NOT_FOUND;
+        indices.push_back(static_cast<size_t>(index));
+    }
+
+    for (size_t idx : indices)
+        backend->unloadMD(target[idx].metadataP);
+
+    target.bulkRemove(std::move(indices));
+
+    if (target.isEmpty()) {
+        sectionMap.erase(sec_key);
+        memToBackend[nixl_mem].erase(backend);
+    }
 
     return NIXL_SUCCESS;
 }

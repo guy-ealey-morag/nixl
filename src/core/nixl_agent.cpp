@@ -416,6 +416,7 @@ nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     return extra_params->backends[0]->engine->queryMem(descs, resp);
 }
 
@@ -507,8 +508,14 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     }
 
     // Doing best effort, and returning err if any
-    for (auto & backend : backend_set) {
-        const nixl_status_t ret = data->localSection_.remDescList(descs, backend);
+    nixl_status_t ret;
+    for (auto &backend : backend_set) {
+        if (backend->supportsLocal() && data->remoteSections_.count(data->name_) != 0) {
+            ret = data->remoteSections_.at(data->name_).remLocalData(descs, backend);
+            if (ret != NIXL_SUCCESS) bad_ret = ret;
+        }
+
+        ret = data->localSection_.remDescList(descs, backend);
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
     }
