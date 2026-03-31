@@ -584,8 +584,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
-                    backend);
+        printOption(
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB,DUMMY])",
+            backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -723,7 +724,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_DUMMY == xferBenchConfig::backend);
 }
 
 bool
