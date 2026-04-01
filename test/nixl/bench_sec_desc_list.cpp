@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <numeric>
+#include <utility>
 #include <random>
 #include <vector>
 
@@ -28,7 +29,7 @@
 
 static constexpr size_t DESC_LEN   = 256;
 #ifdef NDEBUG
-static constexpr int    ITERATIONS = 4096;
+static constexpr int ITERATIONS = 2048;
 static constexpr int    WARMUP     = 64;
 #else
 static constexpr int    ITERATIONS = 64;
@@ -51,6 +52,34 @@ generateDescs(size_t count, uintptr_t addr_offset, std::mt19937 &rng) {
     }
     std::shuffle(descs.begin(), descs.end(), rng);
     return descs;
+}
+
+enum class BatchPlacement { AFTER, INTERLEAVED };
+
+static std::pair<std::vector<nixlSectionDesc>, std::vector<nixlSectionDesc>>
+generateSplitDescs(size_t base_count,
+                   size_t batch_count,
+                   BatchPlacement placement,
+                   std::mt19937 &rng) {
+    if (placement == BatchPlacement::AFTER) {
+        auto base = generateDescs(base_count, 0, rng);
+        auto batch = generateDescs(batch_count, base_count * DESC_LEN * 2, rng);
+        return {std::move(base), std::move(batch)};
+    }
+
+    size_t total = base_count + batch_count;
+    std::vector<nixlSectionDesc> all(total);
+    for (size_t i = 0; i < total; ++i) {
+        all[i].addr = static_cast<uintptr_t>(i * DESC_LEN * 2);
+        all[i].len = DESC_LEN;
+        all[i].devId = 0;
+        all[i].metadataP = nullptr;
+    }
+    std::shuffle(all.begin(), all.end(), rng);
+
+    std::vector<nixlSectionDesc> base(all.begin(), all.begin() + base_count);
+    std::vector<nixlSectionDesc> batch(all.begin() + base_count, all.end());
+    return {std::move(base), std::move(batch)};
 }
 
 #ifdef HAVE_BULK_REMOVE
@@ -88,11 +117,11 @@ buildSortedList(const std::vector<nixlSectionDesc> &data) {
 }
 
 static double
-benchInsertPerElement(size_t base_size, size_t batch_size,
+benchInsertPerElement(size_t base_size,
+                      size_t batch_size,
+                      BatchPlacement placement,
                       std::mt19937 &rng) {
-    auto base_data  = generateDescs(base_size, 0, rng);
-    uintptr_t batch_off = base_size * DESC_LEN * 2;
-    auto batch_data = generateDescs(batch_size, batch_off, rng);
+    auto [base_data, batch_data] = generateSplitDescs(base_size, batch_size, placement, rng);
     auto base_list  = buildSortedList(base_data);
 
     for (int w = 0; w < WARMUP; ++w) {
@@ -115,10 +144,8 @@ benchInsertPerElement(size_t base_size, size_t batch_size,
 }
 
 static double
-benchInsertBatch(size_t base_size, size_t batch_size, std::mt19937 &rng) {
-    auto base_data  = generateDescs(base_size, 0, rng);
-    uintptr_t batch_off = base_size * DESC_LEN * 2;
-    auto batch_data = generateDescs(batch_size, batch_off, rng);
+benchInsertBatch(size_t base_size, size_t batch_size, BatchPlacement placement, std::mt19937 &rng) {
+    auto [base_data, batch_data] = generateSplitDescs(base_size, batch_size, placement, rng);
     auto base_list  = buildSortedList(base_data);
 
     for (int w = 0; w < WARMUP; ++w) {
@@ -262,8 +289,9 @@ printSpeedupTable(const char *title,
 int main() {
     std::mt19937 rng(42);
 
-    const std::vector<size_t> insert_list_sizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
-    const std::vector<size_t> remove_list_sizes = {8, 16, 32,64, 128, 256, 512, 1024, 2048, 4096, 8192};
+    const std::vector<size_t> insert_list_sizes = {
+        0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
+    const std::vector<size_t> remove_list_sizes = {8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
     const std::vector<size_t> batch_sizes       = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
 
     std::printf("=== nixlSecDescList Microbenchmark (matrix) ===\n");
@@ -271,26 +299,43 @@ int main() {
 
     size_t iR = insert_list_sizes.size();
     size_t iC = batch_sizes.size();
-    Matrix ins_per_elem(iR, std::vector<double>(iC));
-    Matrix ins_batch(iR, std::vector<double>(iC));
 
-    for (size_t r = 0; r < iR; ++r) {
-        for (size_t c = 0; c < iC; ++c) {
-            size_t L = insert_list_sizes[r];
-            size_t B = batch_sizes[c];
-            std::printf("  bench insert  L=%-6zu B=%-6zu ...\r", L, B);
-            std::fflush(stdout);
-            ins_per_elem[r][c] = benchInsertPerElement(L, B, rng);
-            ins_batch[r][c]    = benchInsertBatch(L, B, rng);
+    struct PlacementInfo {
+        BatchPlacement placement;
+        const char *label;
+    };
+
+    const PlacementInfo placements[] = {
+        {BatchPlacement::AFTER, "append"},
+        {BatchPlacement::INTERLEAVED, "interleaved"},
+    };
+
+    for (const auto &pi : placements) {
+        Matrix ins_per_elem(iR, std::vector<double>(iC));
+        Matrix ins_batch(iR, std::vector<double>(iC));
+
+        for (size_t r = 0; r < iR; ++r) {
+            for (size_t c = 0; c < iC; ++c) {
+                size_t L = insert_list_sizes[r];
+                size_t B = batch_sizes[c];
+                std::printf("  bench insert [%s]  L=%-6zu B=%-6zu ...\r", pi.label, L, B);
+                std::fflush(stdout);
+                ins_per_elem[r][c] = benchInsertPerElement(L, B, pi.placement, rng);
+                ins_batch[r][c] = benchInsertBatch(L, B, pi.placement, rng);
+            }
         }
-    }
-    std::printf("%-60s\n", "");
+        std::printf("%-60s\n", "");
 
-    printTable("Insertion per-element", insert_list_sizes, batch_sizes,
-               ins_per_elem);
-    printTable("Insertion batch", insert_list_sizes, batch_sizes, ins_batch);
-    printSpeedupTable("Insertion", insert_list_sizes, batch_sizes,
-                      ins_per_elem, ins_batch);
+        char title[128];
+        std::snprintf(title, sizeof(title), "Insertion per-element (%s)", pi.label);
+        printTable(title, insert_list_sizes, batch_sizes, ins_per_elem);
+
+        std::snprintf(title, sizeof(title), "Insertion batch (%s)", pi.label);
+        printTable(title, insert_list_sizes, batch_sizes, ins_batch);
+
+        std::snprintf(title, sizeof(title), "Insertion (%s)", pi.label);
+        printSpeedupTable(title, insert_list_sizes, batch_sizes, ins_per_elem, ins_batch);
+    }
 
 #ifdef HAVE_BULK_REMOVE
     size_t rR = remove_list_sizes.size();
