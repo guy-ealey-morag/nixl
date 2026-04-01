@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,4 +37,11 @@ plugin_test = executable('test_plugin',
                         dependencies: [nixl_dep, nixl_common_dep, cuda_dep, nixl_test_utils_dep],
                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
                         install: true)
+
+bench_sec_desc_list = executable('bench_sec_desc_list',
+           'bench_sec_desc_list.cpp',
+           dependencies: [nixl_dep, nixl_infra, nixl_test_utils_dep],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           link_with: [serdes_lib],
+           install: true)
 
