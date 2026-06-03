@@ -290,14 +290,17 @@ endif
 etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
-if not etcd_dep.found() and etcd_lib_path != ''
-    etcd_lib = cpp.find_library('etcd-cpp-api', dirs: etcd_lib_path)
-    if etcd_lib.found()
-        if cpp.has_header('etcd/Client.hpp', args : '-I' + etcd_inc_path)
-            etcd_inc = include_directories(etcd_inc_path, is_system: true)
+if not etcd_dep.found()
+    etcd_lib_dirs = etcd_lib_path != '' ? [etcd_lib_path] : []
+    etcd_lib = cpp.find_library('etcd-cpp-api', dirs : etcd_lib_dirs, required : false)
+    etcd_hdr_args = etcd_inc_path != '' ? ['-I' + etcd_inc_path] : []
+    if etcd_lib.found() and cpp.has_header('etcd/Client.hpp', args : etcd_hdr_args)
+        if etcd_inc_path != ''
             etcd_dep = declare_dependency(
-                        include_directories : etcd_inc,
+                        include_directories : include_directories(etcd_inc_path, is_system: true),
                         dependencies : etcd_lib)
+        else
+            etcd_dep = declare_dependency(dependencies : etcd_lib)
         endif
     endif
 endif
